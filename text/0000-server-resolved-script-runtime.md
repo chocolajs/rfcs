@@ -1,5 +1,5 @@
 - Start Date: 2026-09-06
-- RFC PR: #2
+- RFC PR: [#2](https://github.com/chocolajs/rfcs/pull/2)
 - Chocola Issue: chocolajs/chocola#147
 
 # Server-resolved `<script>` with runtime tree-shaking
