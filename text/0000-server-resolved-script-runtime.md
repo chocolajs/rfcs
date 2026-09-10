@@ -1,6 +1,6 @@
 - Start Date: 2026-09-06
-- RFC PR: (leave this empty)
-- Chocola Issue: (leave this empty)
+- RFC PR: #2
+- Chocola Issue: chocolajs/chocola#147
 
 # Server-resolved `<script>` with runtime tree-shaking
 
