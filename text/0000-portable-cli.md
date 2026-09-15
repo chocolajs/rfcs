@@ -1,7 +1,6 @@
 - Start Date: 2026-09-14
-- RFC PR: (leave this empty)
-- Chocola Issue: (leave this empty)
-
+- RFC PR: [#6](https://github.com/chocolajs/rfcs/pull/6)
+- Chocola Issue: chocolajs/chocola#167
 # Portable CLI with opt-in config and zero-boilerplate
 
 ## Summary
