@@ -6,7 +6,7 @@
 
 ## Summary
 
-Introduce declarative reactivity to Chocola via a `chocola/state` sub-module exposing three primitives — `$cast`, `$react`, and `$bake` — and a template convention that distinguishes reactive (`${foo}`) from static (`{foo}`) bindings. Elements and components remain statefulness-agnostic by default, with `$cast`/`$bake` directives to override binding statefulness per-tag (inspired by Flutter's stateful/stateless widgets). This RFC integrates `specs/state.md` as the canonical spec and expands it into a full RFC with compiler and teaching implications.
+Introduce declarative reactivity to Chocola via a `chocola/state` sub-module exposing three primitives — `$cast`, `$react`, and `$bake` — and a template convention that distinguishes reactive (`${foo}`) from static (`{foo}`) bindings. `$react` is offered in two forms: an imported ` $react([dep1, dep2], () => {})` for explicit multi-dependency effects and a direct instance method `castVar.$react((oldValue) => {})` that persists as the more direct, lower-overhead path for single-variable effects (reduced scope, no array/diff). Elements and components remain statefulness-agnostic by default, with `$cast`/`$bake` directives to override binding statefulness per-tag (inspired by Flutter's stateful/stateless widgets). This RFC integrates `specs/state.md` as the canonical spec and expands it into a full RFC with compiler and teaching implications.
 
 ## Motivation
 
@@ -98,7 +98,28 @@ Casting a variable prompts Chocola to create a structured class that contains it
 
 ##### `$react()`
 
-Stateful variables contain a `$react()` method that receives an arrow function to be triggered when the casted variable updates:
+`$react` is available in two complementary forms — an imported effect for explicit multi-dependency tracking, and a direct instance method on a casted variable for the single-dependency fast path (reduced scope, better performance).
+
+**1. Imported form — explicit dependencies array:**
+
+```js
+import { $cast, $react } from 'chocola/state';
+
+let dep1 = $cast(0);
+let dep2 = $cast(1);
+
+$react([dep1, dep2], (oldValues) => {
+  console.log(dep1, oldValues.dep2); // runs when dep1 or dep2 updates
+});
+
+// single dependency via imported form is also valid
+let num = $cast(0);
+$react([num], () => {
+  console.log(num); // runs when num updates
+});
+```
+
+**2. Instance method — single-variable fast path:**
 
 ```js
 import { $cast } from 'chocola/state';
@@ -106,20 +127,39 @@ import { $cast } from 'chocola/state';
 let num = $cast(0);
 
 num.$react((oldValue) => {
-    console.log(oldValue); // runs when num updates and logs the previous value of num
+  console.log(oldValue); // runs when num updates, receives previous snapshot
 });
 ```
 
 Semantics:
 
-- Callback signature: `(oldValue) => void`. `oldValue` is the snapshot of the value before mutation (obtained via internal `$bake`).
-- Invoked synchronously after the mutation, batched per microtask if multiple mutations occur in the same tick (to avoid duplicate DOM patches).
-- Available only on `$cast`-ed variables; calling on a non-cast variable is a compile error.
-- In SSR, `$react` callbacks do not run server-side (they are client-only effects, registered inside `ChocolaComponent#init` `runtime/index.js:214-251`).
+- **Imported signature**: `$react(deps: Array<$cast>, effect: (oldValues: {...depsValues}) => void)`. `deps` is an explicit array of casted variables to track; `effect` is an arrow function that receives a generated map of the dependencies previous snapshots.
+- **Instance signature**: `castVar.$react(effect: (oldValue) => void)`. Available only on casted variables; `oldValue` is the snapshot before mutation (obtained via internal `$bake`). More direct and more performant for single-var effects: no array allocation, no dependency diffing, subscribes directly to that primitive's subscriber list with reduced scope.
+- Both forms are invoked synchronously after any dependency mutates, batched per microtask if multiple mutations occur in the same tick (to avoid duplicate DOM patches and effects firing twice when both `dep1` and `dep2` change together).
+- Dependencies / receivers must be casted variables; passing an uncasted variable is a compile error. `$react([])` with an empty array is a no-op with a compiler warning.
+- The two forms coexist and are interchangeable for the single-var case: `num.$react(fn)` is equivalent to `$react([num], fn)` with lower overhead. Prefer the instance method when reacting to exactly one variable, and the imported form when reacting to two or more.
+- In SSR, `$react` effects do not run server-side (they are client-only effects, registered inside `ChocolaComponent#init` `runtime/index.js:214-251`).
 
 ##### `$bake()`
 
 To save a snapshot of a casted variable, use the `$bake()` function:
+
+```js
+import { $cast, $bake, $react } from 'chocola/state';
+
+let num = $cast(0);
+let hist = [];
+
+$react([num], () => {
+    hist.push($bake(num)); // push the current value of num
+    // `hist.push(num);` would push the stateful variable reference instead
+    if (hist.length > 5) console.log(hist);
+});
+```
+
+`$bake(value)` returns a plain JS primitive/value (deep clone for objects/arrays) that is no longer reactive. It is the explicit opt-out from reactivity at the expression level. Server-side, `$bake` is identity (already plain `ctx` value via `compileExpr`).
+
+The same effect can be written with the instance fast path when only one variable is tracked:
 
 ```js
 import { $cast, $bake } from 'chocola/state';
@@ -128,13 +168,9 @@ let num = $cast(0);
 let hist = [];
 
 num.$react(() => {
-    hist.push($bake(num)); // push the current value of num
-    // `hist.push(num);` would push the stateful variable reference instead
-    if (hist.length > 5) console.log(hist);
+    hist.push($bake(num)); // equivalent to $react([num], () => hist.push($bake(num)))
 });
 ```
-
-`$bake(value)` returns a plain JS primitive/value (deep clone for objects/arrays) that is no longer reactive. It is the explicit opt-out from reactivity at the expression level. Server-side, `$bake` is identity (already plain `ctx` value via `compileExpr`).
 
 #### Templates
 
@@ -169,7 +205,7 @@ Compiler handling (`compiler/component-processor.js:452-464` `compileExpr`, `dom
 - `{expr}` — evaluated once server-side via `compileExpr(expr)(ctxProxy)` with `with(ctx)` proxy (`parser/utils.js:5-16`), result interpolated as static text/attribute.
 - `${expr}` — compiled to a reactive subscription. The parser (`protectCurlyBraces` `utils.js:20-44` must distinguish `${` from `{`) creates a binding that subscribes to identifiers found in `expr`. At runtime, the generated `run-*.js` patch function re-evaluates `expr` and updates the text node/attribute when any `$cast` dependency notifies.
 
-This explicit distinction enables the server-resolved Script Resolver (`text/0001-server-resolved-script-runtime.md` §B Reachability) to treat `${}` deps as client-reachable and warn when `${num}` references a non-`$cast` variable (reactive casting of static) or when `$cast` variable is never used reactively (unused reactive).
+This explicit distinction enables the server-resolved Script Resolver (`text/0001-server-resolved-script-runtime.md` §B Reachability) to treat `${}` deps, `$react([...deps], ...)` deps, and `castVar.$react(...)` receivers as client-reachable and warn when `${num}` references a non-`$cast` variable (reactive casting of static) or when `$cast` variable is never used reactively (unused reactive).
 
 ##### Elements and components statefulness
 
@@ -179,7 +215,7 @@ Chocola provides `$bake` and `$cast` directives to make all bindings inside a ta
 
 ```html
 <script>
-import { $cast, $bake } from 'chocola/state';
+import { $cast, $bake, $react } from 'chocola/state';
 
 let num = $cast(0);
 let history = [];
@@ -190,7 +226,7 @@ function sumNum() {
   history.push(numSnap);
 }
 
-num.$react(() => {
+$react([num], () => {
   if (num > 5) console.log(history);
 });
 </script>
@@ -228,9 +264,9 @@ The analogy is simple:
 #### Compiler & Runtime Integration
 
 - **Parsing**: `parser/component.js:50-144` `extractTopLevelVariables` and `parser/script.js` (proposed in `text/0001-`) must recognize `import { $cast, $bake, $react } from 'chocola/state'` and `let x = $cast(...)` patterns via AST (`acorn`) rather than regex, to handle destructuring and deep reactivity.
-- **Reachability**: `$cast` declarations referenced only via `{}` are server-only; those referenced via `${}` or `$react`/`$bake` inside `$runtime` are client-reachable and emitted as `let x = ctx.x ?? $cast(init)` with hydration guard (`component-processor.js:547-549`).
-- **Reactivity runtime**: `runtime/index.js:173-312` `ChocolaComponent` will hold a reactive primitive class (similar to Svelte's `State` store) with `#value`, `get`, `set`, `subscribe`, `$react`, and `$bake` (deep clone). Text node patching reuses `interpolateNode` subscriptions.
-- **Diagnostics**: `warnUnusedDeclaration` (`compiler/utils.js:17-22`, `component-processor.js:170-233`) extended: warn on `$cast` never used in `${}`/`$react`, and warn on `${nonCastVar}`.
+- **Reachability**: `$cast` declarations referenced only via `{}` are server-only; those referenced via `${}`, via `$react([...deps], fn)` dependency array, via `castVar.$react(fn)` receiver, or via `$bake` inside `$runtime` are client-reachable and emitted as `let x = ctx.x ?? $cast(init)` with hydration guard (`component-processor.js:547-549`). The resolver collects identifiers from the `$react` dependency array AST and from `castVar.$react` call-site receivers (not from effect body alone).
+- **Reactivity runtime**: `runtime/index.js:173-312` `ChocolaComponent` will hold a reactive primitive class (similar to Svelte's `State` store) with `#value`, `get`, `set`, `subscribe`, `$react` (instance method for single-var fast path), and `$bake` (deep clone). The standalone `$react(deps, fn)` helper iterates `deps` and subscribes to each primitive's subscriber list with batched invocation; the instance method `castVar.$react(fn)` subscribes directly with reduced scope and avoids array/diff overhead. Text node patching reuses `interpolateNode` subscriptions.
+- **Diagnostics**: `warnUnusedDeclaration` (`compiler/utils.js:17-22`, `component-processor.js:170-233`) extended: warn on `$cast` never used in `${}` or as a `$react` dependency / `.$react` receiver, warn on `$react([])` with empty/non-`$cast` deps and on `nonCastVar.$react`, and warn on `${nonCastVar}`.
 
 ## How we teach this
 
@@ -239,8 +275,8 @@ This continues the use of the `$` sigil for Chocola features and lends state man
 This would imply creating a new docs section for explaining how reactivity works in Chocola. Most users will find this familiar since it's a concept present in most commercial frameworks. Specifically:
 
 - New page `documentation/04-state/01-reactivity.md` covering `$cast`/`$react`/`$bake`, `${}` vs `{}`, and `$cast`/`$bake` directives with the cake analogy.
-- `documentation/02-components/01-fundamentals.md:95-140` updated to note top-level `let` is static unless `$cast`-ed; `documentation/03-templates` updated to document `${}`.
-- `documentation/05-runtime/01-runtime.md` clarified: `$runtime` is where `$react` subscriptions are registered; `documentation/06-architecture/01-compiler-flow.md` steps 3-5 note reactive binding subscription injection.
+- `documentation/02-components/01-fundamentals.md:95-140` updated to note top-level `let` is static unless casted; `documentation/03-templates` updated to document `${}`.
+- `documentation/05-runtime/01-runtime.md` clarified: `$runtime` is where `$react` subscriptions are registered — both imported `$react([...deps], effect)` and instance `castVar.$react(effect)` (single-var fast path); `documentation/06-architecture/01-compiler-flow.md` steps 3-5 note reactive binding subscription injection.
 - Teaching emphasizes explicitness: "if you want reactivity, cast it and bind with `${}`; otherwise it is static and server-evaluated."
 
 No `PULL_REQUEST_TEMPLATE.md` churn beyond changelog entry referencing RFC.
