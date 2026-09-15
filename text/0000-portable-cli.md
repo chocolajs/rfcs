@@ -347,16 +347,16 @@ Help output **reuses** `compiler/index.js:18-40` banner (`logBanner()` gold/whit
 
 ## Unresolved questions
 
-- Should `--open` respect a `--host`/`--port` that came from `PORT` env delegation (e.g., `PORT=8080 chjs dev --open` should open `http://localhost:8080` or `http://0.0.0.0:8080`)? Proposal: open `http://localhost:<port>` when host is `0.0.0.0` for browser usability, otherwise `http://<host>:<port>`.
-- Add `--https` for `dev`/`serve` in a follow-up, or defer until a real cert story exists? No action for this RFC.
+None — all items resolved or deferred for this RFC (see below).
 
 ### Resolved (per review)
 
 - `chocola init` / `chocola create` scaffolding (templates, `--template` options, `src/index.html` generation, `git init`, package manager selection) is **out of scope** for this RFC. It will be a new feature with a full RFC covering template design and init options. For this RFC, `chocola dev/build/serve` in an empty directory errors with `src/index.html not found` and hints `mkdir -p src/lib src/static && echo '<html><body><app>Hello</app></body></html>' > src/index.html`.
 - **Alias:** `chjs` only; `choco` rejected (Chocolatey collision). Both bins map to `./bin/chocola.js`.
 - **`--open`:** Supported in `chocola dev` (lazy `open` import, `child_process` fallback, no hard dependency).
-- **`init`/`create`:** Out of scope — separate RFC for templates/init options.
 - **Silent warnings:** Implemented as `getConfig(rootDir, { silent: true })` / `loadConfig(rootDir, { silent:true })`; CLI passes `silent:true`, programmatic API defaults `false`.
 - **Container `PORT`/`host`:** `chocola serve` honors `process.env.PORT` when no `--port` flag is present (precedence `flag > env PORT > config > default`). When `PORT` is set and no explicit host flag/config exists, host defaults to `0.0.0.0` for container binding.
 - **Local delegation:** Global CLI delegates to project-local `chocola` via `createRequire(rootDir).resolve("chocola/package.json")` + dynamic import; falls back to bundled code when no local install.
 - **Banner:** Help reuses `compiler/index.js:18-40` `logBanner()` (gold/white box). Plain output available via `NO_COLOR=1` / `--plain`.
+- **`--open` host handling:** When `--open` is used, open `http://localhost:<port>` if effective host is `0.0.0.0` (browser usability), otherwise `http://<host>:<port>`. Covers `PORT=8080 chjs dev --open` case.
+- **`--https`:** Deferred — no `dev`/`serve` HTTPS support in v1; requires cert story, tracked as future enhancement. No action for this RFC.
