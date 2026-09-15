@@ -6,7 +6,7 @@
 
 ## Summary
 
-Introduce a first-class, globally-installable CLI (`chocola`) that makes Chocola **portable and zero-boilerplate** by default. The CLI ships via `package.json#bin` and provides three commands — `chocola build`, `chocola dev`, and `chocola serve` — that directly replace the user-authored init scripts (`chocola.js`, `chocola.server.js`, `server.js`) described in `documentation/01-introduction/03-project-structure.md:106-152` and `documentation/01-introduction/02-getting-started.md:47-92`. Configuration (`chocola.config.json`) becomes fully **opt-in**: when absent the CLI falls back to the defaults already implemented (`srcDir: "src"`, `outDir: "dist"`, `libDir: "lib"`, `dev.port: 3000`, `server.port: 8080`, etc.). CLI flags override config file values, which override built-ins. Existing programmatic APIs (`app.build(__dirname)`, `dev.server(__dirname)`, `serve(__dirname)` / `createHandler(__dirname)`) are preserved for backwards compatibility but become unnecessary for most users.
+Introduce a first-class, globally-installable CLI (`chocola`, alias `chjs`) that makes Chocola **portable and zero-boilerplate** by default. The CLI ships via `package.json#bin` (`chocola` + `chjs`; `choco` rejected due to Chocolatey) and provides three commands — `chocola build`, `chocola dev` (with `--open`), and `chocola serve` — that directly replace the user-authored init scripts (`chocola.js`, `chocola.server.js`, `server.js`) described in `documentation/01-introduction/03-project-structure.md:106-152` and `documentation/01-introduction/02-getting-started.md:47-92`. Configuration (`chocola.config.json`) becomes fully **opt-in** via `getConfig(rootDir, { silent:true })` / `loadConfig(rootDir, { silent:true })`: when absent the CLI falls back silently to defaults (`srcDir: "src"`, `outDir: "dist"`, `libDir: "lib"`, `dev.port: 3000`, `server.port: 8080`, etc.). Precedence is `CLI flags > env PORT (serve) > config file > built-ins`; `serve` binds to `0.0.0.0` when `PORT` is set in containers. The CLI reuses `compiler/index.js:18-40` `logBanner()` for help and delegates to the project-local `chocola` installation when present (Vite-style). Existing programmatic APIs (`app.build(__dirname)`, `dev.server(__dirname)`, `serve(__dirname)` / `createHandler(__dirname)`) are preserved but become unnecessary for most users. `chocola init`/`create` scaffolding is out of scope and will be a follow-up implementation.
 
 ## Motivation
 
@@ -122,14 +122,15 @@ Add `bin/chocola.js` (ESM, `#!/usr/bin/env node`) plus `package.json#bin` entry.
 // package.json additions
 {
   "bin": {
-    "chocola": "./bin/chocola.js"
+    "chocola": "./bin/chocola.js",
+    "chjs": "./bin/chocola.js"
   },
   "files": ["bin/", "compiler/", "dev/", "server/", "runtime/", "parser/", "utils.js"]
 }
 ```
 
 - `bin/chocola.js` starts with `#!/usr/bin/env node` and `import { ... }` (ESM, consistent with `package.json:type:module`).
-- Executable bit set (`chmod +x`) for POSIX; npm generates `.cmd`/`.ps1` shims on Windows automatically.
+- Executable bit set (`chmod +x`) for POSIX; npm generates `.cmd`/`.ps1` shims on Windows automatically. Both `chocola` and `chjs` point to the same entry; `chjs` is the short alias (`choco` is intentionally avoided due to collision with Chocolatey on Windows).
 - Keep `exports` unchanged for programmatic usage.
 
 #### 2. CLI surface
@@ -156,11 +157,11 @@ build options:
 dev options:
       --host <hostname>     Hostname (default: localhost, alias --hostname)
       --port <number>       Port (default: 3000)
-      --open                Open browser after start (optional, deferred)
+      --open                Open browser after start
 
 serve options:
-      --host <hostname>     Hostname (default: localhost)
-      --port <number>       Port (default: 8080)
+      --host <hostname>     Hostname (default: localhost; see PORT/container note)
+      --port <number>       Port (default: 8080; env PORT overrides when flag absent)
       --middleware <path>   Path to middleware file (relative to root)
 ```
 
@@ -169,10 +170,13 @@ serve options:
 - `--help` per subcommand: `chocola build --help`, `chocola --help`.
 - Exit codes: `0` success, `1` build/render error, `2` bad args. `dev`/`serve` keep running until `SIGINT`/`SIGTERM` (graceful `server.close()`).
 
-Global vs local portability:
+Global vs local portability and local delegation:
 
-- Works via `npx chocola build`, `pnpm dlx chocola dev`, `bunx chocola serve`, `npm i -g chocola` (global `bin` link), and `npm run` scripts (`"build": "chocola build"`). No project-local `chocola.js` needed.
-- When invoked globally, the CLI resolves `rootDir` and then `import`s the **local** Chocola installation if present? Decision: **CLI always uses its own bundled `compiler/`** (the binary's package). If user ran `npx chocola@2.0` inside a project with `chocola@2.0-next.11` as dep, `npx` already fetched matching version. Global binary naturally uses global version — acceptable and matches Vite/Astro. Document that `npx`/`npm exec` picks the requested version; for reproducible CI prefer `npm run` or `npx --package chocola`.
+- Works via `npx chocola build`, `pnpm dlx chocola dev`, `bunx chocola serve`, `npm i -g chocola` (global `bin` link), and `npm run` scripts (`"build": "chocola build"`). No project-local `chocola.js` needed. `chjs` is a drop-in alias everywhere (`chjs build`, `npx chjs dev`).
+- **Local delegation (Vite-style):** When the CLI is invoked (especially from a global install), it resolves `rootDir` and attempts to delegate to the **project-local** Chocola installation first. Resolution order:
+  1. Try `import.meta.resolve("chocola/compiler", pathToFileURL(path.join(rootDir, "package.json")).href)` / `createRequire(rootDir).resolve("chocola/package.json")` — if found and version satisfies, dynamically `import()` compiler/dev/server from that local path and execute with local code.
+  2. Fallback to the CLI's own bundled `compiler/` if no local install exists (enables `npx chocola dev` in an empty folder) or if resolution fails.
+  This guarantees `npm i -g chocola@2.1` + project-local `chocola@2.0-next.11` runs the project's pinned version, not the global one. `npx chocola@2.0` already fetches the matching version, but delegation covers the `npm i -g` case without extra config. Log a one-line `Using local chocola vX.Y.Z from <root>/node_modules` at debug level when delegation occurs.
 
 #### 3. Config resolution (opt-in)
 
@@ -190,25 +194,34 @@ async function resolveConfig(rootDir, cliOverrides, configPathOpt) {
   const customPath = configPathOpt ? path.resolve(rootDir, configPathOpt) : null;
   const fullConfig = customPath
     ? JSON.parse(await readFile(customPath, "utf-8"))
-    : await getConfig(rootDir);
+    : await getConfig(rootDir, { silent: true }); // <-- silent: true for CLI zero-boilerplate
   const isMissing = customPath ? false : isMissingConfigFile(fullConfig);
-  const base = await loadConfig(rootDir, customPath); // or reuse fullConfig
+  const base = await loadConfig(rootDir, { silent: true, customPath }); // propagated
   // CLI overrides: e.g., --outDir, --port
   if (cliOverrides.outDir) base.outDir = cliOverrides.outDir;
   if (cliOverrides.srcDir) base.srcDir = cliOverrides.srcDir;
   if (cliOverrides.libDir) base.libDir = cliOverrides.libDir;
   if (cliOverrides.emptyOutDir != null) base.emptyOutDir = cliOverrides.emptyOutDir;
-  // dev/server namespaces
+  // dev/server namespaces — PORT env handled below for serve
   const effectiveDev = { hostname: "localhost", port: 3000, ...(!isMissing && fullConfig.dev || {}), ...cliOverrides.dev };
   const effectiveServer = { hostname: "localhost", port: 8080, middleware: null, ...(!isMissing && fullConfig.server || {}), ...cliOverrides.server };
+  // container PORT env override (serve only): flag > env PORT > config > default
+  if (!cliOverrides.server?.port && process.env.PORT) {
+    const envPort = parseInt(process.env.PORT, 10);
+    if (Number.isFinite(envPort)) effectiveServer.port = envPort;
+  }
+  // when PORT env is set and no explicit host flag/config, default host to 0.0.0.0 for containers
+  if (!cliOverrides.server?.hostname && !fullConfig.server?.hostname && !fullConfig.server?.host && process.env.PORT) {
+    effectiveServer.hostname = "0.0.0.0";
+  }
   return { fullConfig, base, effectiveDev, effectiveServer, isMissing };
 }
 ```
 
-- `utils.js:getConfig()` already returns `{__chocolaMissingConfigFile:true}` on `ENOENT` without throwing (`utils.js:65-72`). CLI **suppresses** the "chocola.config.json not found: using default configuration" warning when invoked via binary — the missing file is intentional for zero-boilerplate. Implement by checking `isMissingConfigFile()` and **not** calling `flushConfigWarnings()` for that case, or by adding an option `getConfig(rootDir, { silent: true })` / `queueConfigWarning` guard. Minimal change: in `bin/chocola.js`, after `getConfig`, if `isMissing` then clear `configWarningBuffers.get(rootDir)` before flush.
-- Similarly suppress per-block warnings (`warnedBlockBundle/Dev/Server` in `utils.js:46-61`, `warnedBundleFields` in `compiler/config.js:20-31`, `warnedDevHostname/Port` in `dev/index.js:30-39`, `warnedServerPort/Hostname` in `server/index.js:398-405`) when `isMissing` is true. This keeps `chocola build` silent on a fresh project.
-- If `chocola.config.json` **exists** but a block is missing, preserve current warnings (useful for advanced users; they already opted into config).
-- `--config` allows monorepo or `chocola build --config ./configs/chocola.prod.json`.
+- `utils.js:getConfig(rootDir, { silent: true })` is added by this RFC. When `silent:true`, `getConfig` does **not** enqueue the "chocola.config.json not found: using default configuration" warning (`utils.js:65-72`) and skips per-block warnings (`utils.js:46-61` `warnedBlockBundle/Dev/Server`). `loadConfig(rootDir, { silent:true })` similarly skips `compiler/config.js:20-31` `warnedBundleFields` and `dev/index.js:30-39` / `server/index.js:398-405` warnings when the caller opts in. All warnings are already gated through `queueConfigWarning`; `silent` simply prevents enqueuing in the first place (no need to clear buffers after the fact). Direct `getConfig`/`loadConfig` calls outside the CLI (programmatic `app.build`) keep current behavior (`silent` defaults to `false`) so existing projects still see warnings.
+- If `chocola.config.json` **exists** but a block is missing, `silent` does not suppress — the file was found, so missing-block warnings still fire (useful for advanced users; they already opted into config). `isMissingConfigFile` remains the signal.
+- `--config` allows monorepo or `chocola build --config ./configs/chocola.prod.json`. When `--config` is explicit and the file is missing, throw `ENOENT` (do not silence) so typos are surfaced.
+- Precedence final: **CLI flags > env PORT (serve) > config file > built-ins**; `dev` does not read `PORT` (only `serve` does, to avoid surprising local dev).
 
 #### 4. Command delegation
 
@@ -240,11 +253,34 @@ switch (cmd) {
 
 Concrete mapping:
 
-- `build`: calls `compiler/index.js:compile(rootDir)` — or `emit(await buildModuleGraph(rootDir, overrides))`. To avoid duplicating config logic, add an optional `overrides` param to `loadConfig(rootDir, overrides)` and thread through `buildModuleGraph`/`renderPage`. Alternatively, the CLI writes a temporary in-memory config overlay and calls existing `compile` (simplest: CLI sets `process.env.CHOCOLA_CLI_OVERRIDES` and `loadConfig` reads it — but explicit param is cleaner). Initial PR can implement by **passing CLI values directly to `loadConfig` merge step** without touching compiler internals for `dev`/`server` port overrides (those are already `opts` in `server/index.js:388-393` which respects `opts.port/hostname` over config).
-- `dev`: calls `dev/index.js:serve(rootDir)` — extend to `serve(rootDir, { port, hostname })` so CLI flags bypass config reload. `dev/index.js:12-42` currently loads `fullConfig` internally; add `opts` param that short-circuits config file values. `fs.watch` (`dev/index.js:61`) and HMR injection (`dev/index.js:129-148`) unchanged.
-- `serve`: calls `server/index.js:serve(rootDir, { port, hostname, middleware })` — already supports `optsArg.port/hostname/middleware` (`server/index.js:388-394`, `187-197`). CLI just normalizes kebab flags to this shape and calls `serve`. For `createHandler` programmatic use, no change.
+- `build`: calls `compiler/index.js:compile(rootDir)` — or `emit(await buildModuleGraph(rootDir, overrides))`. To avoid duplicating config logic, add an optional `overrides` param to `loadConfig(rootDir, { silent:true, overrides })` and thread through `buildModuleGraph`/`renderPage`. Alternatively, the CLI writes a temporary in-memory config overlay and calls existing `compile` (simplest: CLI sets `process.env.CHOCOLA_CLI_OVERRIDES` and `loadConfig` reads it — but explicit param is cleaner). Initial PR can implement by **passing CLI values directly to `loadConfig` merge step** without touching compiler internals for `dev`/`server` port overrides (those are already `opts` in `server/index.js:388-393` which respects `opts.port/hostname` over config).
+- `dev`: calls `dev/index.js:serve(rootDir, { port, hostname, open })` — extend to accept `open` boolean. When `--open` is set, after `server.listen` succeeds the CLI does a dynamic `import("open")` or `await import("node:child_process")` fallback to `open http://hostname:port` (lazy import so `open` is optional; if not installed, use `child_process.exec` platform branching `open`/`xdg-open`/`start`). `dev/index.js:12-42` currently loads `fullConfig` internally; add `opts` param that short-circuits config file values. `fs.watch` (`dev/index.js:61`) and HMR injection (`dev/index.js:129-148`) unchanged.
+- `serve`: calls `server/index.js:serve(rootDir, { port, hostname, middleware })` — already supports `optsArg.port/hostname/middleware` (`server/index.js:388-394`, `187-197`). CLI normalizes kebab flags to this shape and applies PORT/host container logic above before calling `serve`. `process.env.PORT` is honored only when no `--port` flag is present. For `createHandler` programmatic use, no change.
 
 Signal handling: `dev` and `serve` trap `SIGINT`/`SIGTERM` to `server.close()` and `fs.watch` close, then `process.exit(0)`.
+
+Local delegation detail (`bin/chocola.js` preamble, before arg parsing):
+
+```js
+import { createRequire } from "module";
+import { pathToFileURL } from "url";
+async function delegateToLocal(rootDir) {
+  try {
+    const req = createRequire(pathToFileURL(path.join(rootDir, "package.json")).href);
+    const localPkg = req.resolve("chocola/package.json");
+    const localRoot = path.dirname(localPkg);
+    // Avoid infinite loop when local === global (same path)
+    if (localRoot === path.dirname(path.dirname(import.meta.url))) return null;
+    const localBin = path.join(localRoot, "bin/chocola.js");
+    // re-exec with local bin preserving argv
+    // Option: import local modules directly instead of re-exec:
+    const mod = await import(pathToFileURL(path.join(localRoot, "compiler/index.js")).href);
+    return mod; // caller uses local compile/dev/server
+  } catch { return null; }
+}
+```
+
+If delegation succeeds, the global CLI forwards to local `compiler/index.js`, `dev/index.js`, `server/index.js` implementations, ensuring config parsing and rendering match the project's declared dependency.
 
 #### 5. Backwards compatibility
 
@@ -260,10 +296,11 @@ Avoid adding `commander`/`yargs` (adds ~50-100kB). Implement ~80 LOC parser hand
 - `--help`, `--version` (`--version` reads `package.json:version`).
 - `--no-emptyOutDir` boolean negation.
 - `--port`/`--host` coercion (`parseInt`, validate 1-65535).
+- `--open` boolean (dev only) — opens `http://<host>:<port>` after listen; implemented via lazy `import("open")` with `child_process` fallback (no hard dep).
 - Unknown flag → `console.error` + `process.exit(2)` with hint.
 - Color via existing `compiler/chalk.js`.
 
-Help output mimics `compiler/index.js:18-40` banner style (gold/white) for brand consistency, but kept minimal for `--help`.
+Help output **reuses** `compiler/index.js:18-40` banner (`logBanner()` gold/white `C H O C O L A` box + `THE SWEETEST WAY TO BUILD THE WEB`). `chocola --help` and `chocola <cmd> --help` first print the banner, then the command-specific usage. This keeps brand identity across `compile()` logs and CLI help. For pipe/grep friendliness, `chocola --help --plain` or `NO_COLOR=1` can suppress ANSI, but default is banner + color (consistent with `logBanner`/`logSuccess`).
 
 #### 7. Testing & validation
 
@@ -292,12 +329,12 @@ Help output mimics `compiler/index.js:18-40` banner style (gold/white) for brand
 
 ## Drawbacks
 
-- **Maintenance surface.** A CLI must be kept in sync with `compiler/config.js`, `dev/index.js`, `server/index.js` flag sets. Adding a new config key requires updating the CLI parser and help text — mitigated by sharing `loadConfig` defaults.
-- **Bin name collision.** `chocola` is short; global install could clash if another package uses same bin (unlikely; `npm view chocola` already owned by this project, but check `npx` cache collisions). Mitigation: verify `npm search chocola` uniqueness; consider `chocola` as sole bin.
-- **Global vs local version skew.** `npm i -g chocola@2.0` + project-local `chocola@1.6` can surprise users who expect local version. Vite solves this by having global CLI delegate to local install if found — Chocola could do the same in a follow-up (try `require.resolve` from `rootDir`). Initial scope: global binary uses its own version and documents `npx`/`npm run` for pinned versions.
-- **Silent config absence.** Suppressing `WARNING!` when `isMissingConfigFile` is true may hide mis-placed config (e.g., `chocola.config.json` in parent dir). Users who intended to have a config but typo'd the path see no warning. Mitigation: `--config` explicit path throws `ENOENT`; only bare missing file is silent.
-- **Windows ESM bin.** `#!/usr/bin/env node` + `package.json:type:module` requires Node >=16 and `.js` extension; Windows `.cmd` shim generation depends on `npm`/`pnpm` correctly handling ESM bins. Tested path: keep bin as `bin/chocola.js` (not extensionless) — npm handles it.
-- **Flag parity creep.** Users will request `--watch`, `--host 0.0.0.0`, `--open`, `--https`, etc. Scope must be bounded; initial RFC ships minimal flags and defers extras to follow-ups.
+- **Maintenance surface.** A CLI must be kept in sync with `compiler/config.js`, `dev/index.js`, `server/index.js` flag sets. Adding a new config key requires updating the CLI parser and help text — mitigated by sharing `loadConfig` defaults and the single `resolveConfig` helper.
+- **Bin name collision.** `chocola` is owned by this project (`npm view chocola`), but short names risk collision. Mitigated by shipping `chjs` as the **only** alias; `choco` is rejected due to Chocolatey on Windows. Both bins point to the same ESM entry so `chjs --help` is identical to `chocola --help`.
+- **Global vs local version skew — mitigated by delegation.** Without delegation, `npm i -g chocola@2.1` + project-local `chocola@2.0-next.11` would run the global version. This RFC **implements Vite-style delegation** (resolve local `chocola/package.json` from `rootDir` and import local `compiler/dev/server` when found), so the skew is resolved by design. Fallback to global when no local install exists preserves `npx chocola dev` in empty folders. The extra `createRequire`/`import` adds ~10 LOC.
+- **Silent config absence.** `getConfig(rootDir, { silent:true })` suppresses warnings only when invoked via the CLI; programmatic `app.build` still warns. Bare missing file is silent (desired for zero-boilerplate), but `--config <path>` with `ENOENT` still throws so typos surface. A mis-placed `chocola.config.json` in a parent dir remains undetected (same as today — `getConfig` only looks at `rootDir`, no `find-up`).
+- **Windows ESM bin.** `#!/usr/bin/env node` + `package.json:type:module` requires Node >=16 and `.js` extension; Windows `.cmd` shim generation depends on `npm`/`pnpm` correctly handling ESM bins. Tested path: keep bin as `bin/chocola.js` (not extensionless) — npm handles it for both `chocola` and `chjs`.
+- **Flag parity creep.** `--open` is now included (lazy `open` import, no hard dep), and `--host 0.0.0.0` container default is handled via `PORT` env for `serve`. Further flags (`--https`, `--watch`) remain deferred to keep scope bounded.
 
 ## Alternatives
 
@@ -310,10 +347,16 @@ Help output mimics `compiler/index.js:18-40` banner style (gold/white) for brand
 
 ## Unresolved questions
 
-- Should the bin be named `chocola` only, or also `choco` alias for brevity? Alias is cheap (`bin: { chocola, choco }`) but risks confusion with `choco` (Chocolatey).
-- Should `chocola dev` support `--open` (open browser) and `--https` in v1, or defer? `--open` is high-value for demos; implementation would `import open from "open"` (new dep) — defer to follow-up to keep deps minimal?
-- Do we need `chocola init` / `chocola create` to scaffold `src/index.html` + `src/lib/` when run in an empty directory, or is that out-of-scope for this RFC (separate `create-chocola` package)? Initial proposal: out-of-scope; CLI errors with "src/index.html not found" and hints `mkdir -p src && echo '...' > src/index.html`.
-- Exact **silent-warning** mechanism: should `getConfig(rootDir, { silent: true })` be a new param, or should `bin/chocola.js` clear `configWarningBuffers` after the fact? Former is cleaner but touches `utils.js`; latter is zero-risk. Preference for explicit `silent` option gated to CLI path.
-- Should `chocola serve` also support `--host 0.0.0.0` binding in containers by default when `PORT` env is set (e.g., `process.env.PORT` overrides config if no `--port`)? Useful for PaaS, but adds env-var precedence layer (env > flag > config? or flag > env > config?). Propose `flag > env PORT > config > default` for `serve` only.
-- Testing `npx` with global vs local resolution: should the global binary attempt to `import` the project's local `chocola/compiler` if `rootDir` has a different installed version (like Vite's local delegation)? This avoids version skew but adds `require.resolve` complexity — defer to v1.1?
-- Help styling: reuse `compiler/index.js:18-38` banner for `chocola --help`, or keep plain text for pipe/grep friendliness? Propose plain help plus `chocola --banner` hidden flag for delight.
+- Should `--open` respect a `--host`/`--port` that came from `PORT` env delegation (e.g., `PORT=8080 chjs dev --open` should open `http://localhost:8080` or `http://0.0.0.0:8080`)? Proposal: open `http://localhost:<port>` when host is `0.0.0.0` for browser usability, otherwise `http://<host>:<port>`.
+- Add `--https` for `dev`/`serve` in a follow-up, or defer until a real cert story exists? No action for this RFC.
+
+### Resolved (per review)
+
+- `chocola init` / `chocola create` scaffolding (templates, `--template` options, `src/index.html` generation, `git init`, package manager selection) is **out of scope** for this RFC. It will be a new feature with a full RFC covering template design and init options. For this RFC, `chocola dev/build/serve` in an empty directory errors with `src/index.html not found` and hints `mkdir -p src/lib src/static && echo '<html><body><app>Hello</app></body></html>' > src/index.html`.
+- **Alias:** `chjs` only; `choco` rejected (Chocolatey collision). Both bins map to `./bin/chocola.js`.
+- **`--open`:** Supported in `chocola dev` (lazy `open` import, `child_process` fallback, no hard dependency).
+- **`init`/`create`:** Out of scope — separate RFC for templates/init options.
+- **Silent warnings:** Implemented as `getConfig(rootDir, { silent: true })` / `loadConfig(rootDir, { silent:true })`; CLI passes `silent:true`, programmatic API defaults `false`.
+- **Container `PORT`/`host`:** `chocola serve` honors `process.env.PORT` when no `--port` flag is present (precedence `flag > env PORT > config > default`). When `PORT` is set and no explicit host flag/config exists, host defaults to `0.0.0.0` for container binding.
+- **Local delegation:** Global CLI delegates to project-local `chocola` via `createRequire(rootDir).resolve("chocola/package.json")` + dynamic import; falls back to bundled code when no local install.
+- **Banner:** Help reuses `compiler/index.js:18-40` `logBanner()` (gold/white box). Plain output available via `NO_COLOR=1` / `--plain`.
