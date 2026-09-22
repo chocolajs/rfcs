@@ -1,6 +1,6 @@
 - Start Date: 2026-09-20
-- RFC PR: (leave this empty)
-- Chocola Issue: (leave this empty)
+- RFC PR: [#7](https://github.com/chocolajs/rfcs/pull/7)
+- Chocola Issue: chocolajs/chocola#185
 
 # Modularization: Splitting Chocola into Library and Framework
 
