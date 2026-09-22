@@ -2,21 +2,23 @@
 - RFC PR: (leave this empty)
 - Chocola Issue: (leave this empty)
 
-# Modularization: Splitting Chocola into Packages
+# Modularization: Splitting Chocola into Library and Framework
 
 ## Summary
 
-Chocola is currently a single monolithic package that bundles the compiler, dev server, SSR capabilities, CLI, and all tooling into one installable unit. This RFC proposes splitting Chocola into separate publishable packages — `@chocola/core`, `@chocola/server`, `@chocola/cli`, `@chocola/stacks`, and `@chocola/vite-plugin` — so that the compiler can be consumed independently by projects using other build tools and frameworks, starting with Vite.
+Chocola is currently a single monolithic package that bundles the compiler, dev server, SSR capabilities, CLI, and all tooling into one installable unit. This RFC proposes a **split into three packages**: `@chocola/core`, the compiler library; `@chocola/vite-plugin`, the official Vite integration; and `chocola`, the full-stack framework that bundles the compiler, dev server, SSR, and CLI together.
 
-The goal is to make Chocola a first-class citizen in the broader JavaScript ecosystem, not just a self-contained framework with its own CLI and server. Users should be able to use Chocola components inside Vite, Astro, or any bundler that supports custom plugins, without being forced to adopt Chocola's full toolchain.
+The distinction mirrors a familiar pattern in the JavaScript ecosystem: **React** is both a library (`react`) and the ecosystem/framework people think of when they say "I'm using React." Chocola follows the same model — `@chocola/core` is the library that makes components work anywhere, `@chocola/vite-plugin` is the official bridge to Vite, and `chocola` is the framework that brings the complete toolchain. This means a developer can say "I'm using Chocola" whether they're using just the compiler inside Vite or the all-in-one stack.
+
+`@chocola/core` enables bundler-agnostic component compilation and adoption as a library. `@chocola/vite-plugin` provides the official Vite integration. `chocola` preserves the original experience — `chocola dev`, `chocola build`, SSR, and CLI — for teams that want the complete, all-in-one framework. The brand stays unified. The toolchain stays consistent. The choice is yours.
 
 ## Motivation
 
 ### What is hard today
 
-Chocola's current structure is a monolith. The `package.json` exports `compiler`, `dev`, and `server` as sub-path imports, but they all live in a single repository and are distributed as a single npm package. This creates several problems:
+Chocola's current structure is a monolith. The `package.json` exports `compiler`, `dev`, and `server` as subpath imports, but they all live in a single repository and are distributed as a single npm package. This creates several problems:
 
-1. **Bundler lock-in.** To use Chocola components, a project must use Chocola's own dev server or build pipeline. There is no way to drop a Chocola component into a Vite project and have it Just Work. Developers who prefer Vite's DX, plugin ecosystem, or HMR must choose between Vite and Chocola — they can't have both.
+1. **Bundler lock-in.** To use Chocola components, a project must use Chocola's own dev server or build pipeline. There is no way to drop a Chocola component into a Vite project and have it just work. Developers who prefer Vite's DX, plugin ecosystem, or HMR must choose between Vite and Chocola — they can't have both.
 
 2. **Adoption friction.** For Chocola to gain traction beyond its own community, it needs to be easy to try. A project that already uses Vite should be able to add Chocola components with a single package install and a plugin registration — not a full framework migration. Every additional tool a user must download (the native dev server, CLI, SSR machinery) is a barrier to entry.
 
@@ -24,39 +26,39 @@ Chocola's current structure is a monolith. The `package.json` exports `compiler`
 
 4. **Maintenance overhead.** The monolith forces all contributors to work within a single release cycle. A bug fix in the compiler shouldn't require a server release, and a CLI improvement shouldn't block a core update. The monolith also means that users who only need the compiler (e.g., for a custom build pipeline) pay the weight of the server, dev tooling, and CLI in their dependency tree.
 
-5. **Marketing and positioning.** Chocola currently occupies a specific niche — "the sweetest way to build the web" with its own CLI, server, and SSR. But this positioning alienates developers who want to use Chocola components as a *library*, not a *framework*. A modular structure allows Chocola to be both: a component framework with its own full-stack metaframework (`@chocola/stacks`) *and* a library that works with Vite (`@chocola/vite-plugin`).
+5. **Brand positioning.** Chocola currently occupies a specific niche — "the sweetest way to build the web" with its own CLI, server, and SSR. But this positioning alienates developers who want to use Chocola components as a *library*, not a *framework*. A split lets Chocola be both: the library that works everywhere, and the framework that handles everything. Just like React.
 
 ### What becomes possible
 
-- **Vite integration.** A project using Vite can install `@chocola/core` and `@chocola/vite-plugin`, register the plugin in `vite.config.js`, and start writing Chocola components — no `chocola dev`, no `chocola build`. Vite handles bundling, HMR, and dev server; Chocola handles components.
+- **Vite integration.** A project using Vite can install `@chocola/core` and `@chocola/vite-plugin`, register the plugin in `vite.config.js`, then start writing Chocola components — no `chocola dev`, no `chocola build`. Vite handles bundling, HMR, and dev server; `@chocola/core` handles components.
 
-- **Gradual adoption.** A team can start by using Chocola components inside their existing Vite project (`@chocola/core` + `@chocola/vite-plugin`). Later, if they want SSR, dev server features, or the full Chocola-native experience, they can add `@chocola/server` or migrate entirely to `@chocola/stacks`. No big-bang migration required.
+- **One brand, multiple experiences.** Users say "I'm using Chocola" whether they're using `@chocola/core` inside Vite, `@chocola/vite-plugin` as a bridge, or the full `chocola` framework with its CLI and dev server. The brand is consistent, just as React is "React" whether you're using the core library or the full React ecosystem. This eliminates the confusing "which Chocola do I choose?" problem.
 
-- **Independent scaling.** Each package can be versioned, tested, and released independently. A breaking change in the CLI doesn't block a compiler patch. Contributors can focus on a single package without needing to understand the entire codebase.
+- **Independent scaling.** `@chocola/core`, `@chocola/vite-plugin`, and `chocola` can be versioned and released independently. A compiler fix doesn't require a framework release, and vice versa. Contributors can focus on one package without needing to understand the entire codebase.
 
-- **Third-party plugin ecosystem.** If `@chocola/core` is cleanly separated, other tooling authors can build plugins for it — Webpack plugins, Rollup plugins, esbuild plugins — without forking the Chocola repository.
+- **The CLI stays familiar.** The `chocola` CLI remains the primary way to run Chocola projects. No one needs to learn a new command. Existing workflows — `chocola dev`, `chocola build`, `chocola serve` — continue unchanged.
 
-- **New branding surface.** Each package is a separate npm package with its own documentation, README, and GitHub presence. `@chocola/vite-plugin` can be discovered by Vite users searching for frameworks. `@chocola/stacks` can be marketed as "the full Chocola experience". This creates multiple entry points for different audiences.
+- **Third-party ecosystem.** With `@chocola/core` cleanly separated, other tooling authors can build plugins for it — webpack plugins, Rollup plugins, esbuild plugins, and alternatives to `@chocola/vite-plugin` — without forking the Chocola repository.
+
+- **Gradual migration.** Existing Chocola projects continue to work with `chocola` unchanged. New projects can start with `@chocola/core` and `@chocola/vite-plugin`, then add the full framework later if needed. No big bang migration required.
 
 ## Detailed design
 
 ### Package structure
 
-The proposed split into five packages:
+This splits into three packages:
 
 | Package | Contents | Purpose |
 |---|---|---|
-| `@chocola/core` | Compiler, parser, runtime, module-graph | The heart of Chocola — compiles `.html` components to runnable JS. Framework-agnostic. |
-| `@chocola/server` | Dev server, SSR server, `createHandler` | Full-stack capabilities: dev server with HMR, SSR rendering. Used by `@chocola/stacks` and advanced users. |
-| `@chocola/cli` | `chocola` / `chjs` binary | Command-line tool for building, developing, and serving Chocola projects. |
-| `@chocola/stacks` | Full metaframework bundling `@chocola/core` + `@chocola/server` + `@chocola/cli` | The original Chocola experience — a complete, autonomous framework with no third-party dependencies. |
-| `@chocola/vite-plugin` | Vite plugin wrapping `@chocola/core` | Official Vite integration. Lets Vite handle bundling/HMR/dev server while Chocola handles components. |
+| `@chocola/core` | Compiler, parser, runtime, shared utilities | The heart of Chocola — compiles `.html` components to runnable JS. Framework-agnostic. Usable with any bundler. |
+| `@chocola/vite-plugin` | Official Vite plugin | Vite integration — component transformation, HMR, build output. Connects `@chocola/core` to Vite's ecosystem. |
+| `chocola` | Full-stack framework: `@chocola/core` + dev server + SSR server + CLI | The complete Chocola experience. This is what users install for `chocola dev`, `chocola build`, and SSR. |
 
 ### Technical Background
 
 **Current state.** The monolithic `chocola` package (`package.json` version `2.0.0-next.11`) distributes:
 
-- `compiler/` — The build pipeline: `module-graph.js`, `component-processor.js`, `render.js`, `pipeline.js`, `runtime-generator.js`, `config.js`, `utils.js`, `dom-processor.js`, `fs.js`, `chalk.js`, `index.js`.
+- `compiler/` — The build pipeline (`module-graph.js`, `component-processor.js`, `render.js`, `pipeline.js`, `runtime-generator.js`, `config.js`, `utils.js`, `dom-processor.js`, `fs.js`, `chalk.js`, `index.js`).
 - `dev/` — Dev server with HMR (`dev/index.js`).
 - `server/` — SSR server (`server/index.js`).
 - `runtime/` — Client-side runtime (`runtime/index.js`).
@@ -64,122 +66,130 @@ The proposed split into five packages:
 - `bin/` — CLI entry point (`bin/chocola.js`).
 - `utils.js` — Shared utilities.
 
-All are shipped as a single npm package with sub-path exports (`chocola/compiler`, `chocola/dev`, `chocola/server`). The `bin` field exposes `chocola` and `chjs` commands.
+All are shipped as a single npm package with subpath exports (`chocola/compiler`, `chocola/dev`, `chocola/server`). The `bin` field exposes `chocola` and `chjs` commands.
 
-**What changes.** Each package above becomes its own npm package with its own `package.json`, repository (or monorepo workspace), and publish pipeline. The `compiler/` directory becomes `@chocola/core`, `dev/` + `server/` become `@chocola/server`, `bin/` becomes `@chocola/cli`, and a new `vite-plugin/` directory becomes `@chocola/vite-plugin`.
+**What changes.** The monolith becomes three packages:
 
-**Monorepo approach.** The current repo at `github.com/chocolajs/chocola` can become a monorepo root with workspaces. Each package lives in its own directory (`packages/core`, `packages/server`, `packages/cli`, `packages/stacks`, `packages/vite-plugin`). This preserves the single-repository development workflow while enabling independent versioning and publishing.
+- `@chocola/core` takes `compiler/`, `parser/`, `runtime/`, and `utils.js`. It exports the compiler API (`compile`, `buildModuleGraph`, etc.) and nothing else. It has no Vite integration — that lives in `@chocola/vite-plugin`. This is the minimal package needed to compile Chocola components, usable in any environment that can run Node.js.
 
-Alternatively, each package could live in its own repository under the `chocolajs` GitHub organization (e.g., `chocolajs/core`, `chocolajs/vite-plugin`), which gives each package full independence but requires coordinated releases and cross-repo dependency management.
+- `@chocola/vite-plugin` is a separate package in its own repository (`github.com/chocolajs/vite-plugin`). It wraps `@chocola/core`'s compilation pipeline and integrates it into Vite's build and dev cycles. It handles component transformation, HMR, and build output generation as a Vite plugin. It depends on `@chocola/core` and has `vite` as a peer dependency.
+
+- `chocola` takes the server, the CLI, and the dev server — plus `@chocola/core` as a dependency. It is the spiritual successor to the current monolithic `chocola` package. The `bin` field exposes `chocola` and `chjs` commands. The exports map preserves the current `./compiler`, `./dev`, and `./server` subpaths; `./compiler` re-exports `@chocola/core` for programmatic use.
+
+**Repository split.** `@chocola/core` lives in its own repository at `github.com/chocolajs/core`. `@chocola/vite-plugin` lives in its own repository at `github.com/chocolajs/vite-plugin`. The `chocola` package (the framework) stays in the main `github.com/chocolajs/chocola` repo, which depends on `@chocola/core` via npm.
+
+`@chocola/core` publishes to npm as `@chocola/core`. `@chocola/vite-plugin` publishes to npm as `@chocola/vite-plugin`. The `chocola` repo consumes `@chocola/core` as a dependency. Cross-repo development is managed via npm versioning and CI that runs tests against published versions. This mirrors how React separates `react` and `react-dom` into their own repos while maintaining coordinated releases.
+
+New contributors who want to work on the compiler go to `chocolajs/core`; those who want to work on the Vite plugin go to `chocolajs/vite-plugin`; those who want to work on the framework experience go to `chocolajs/chocola`. Each repo is focused and self-contained.
 
 ### Implementation
 
 #### Package boundaries
 
-**`@chocola/core`** — The compiler package. Contains everything in the current `compiler/`, `parser/`, and `runtime/` directories, plus `utils.js`. This is the minimal package needed to compile Chocola components. It has no dependencies on Node.js-specific APIs (no `http`, `fs.watch`, etc.) beyond the build-time file system operations. It should be usable in any environment that can run Node.js — including bundlers via their plugin APIs.
+**`@chocola/core`** — The compiler library. Contains everything in the current `compiler/`, `parser/`, and `runtime/` directories, plus `utils.js`. This is the minimal package needed to compile Chocola components. It has no dependencies on Node.js-specific APIs beyond build-time file system operations. It should be usable in any environment that can run Node.js — including bundlers via their plugin APIs.
 
 Key exports:
 - `compile(rootDir)` — Build components for production.
 - `buildModuleGraph(rootDir)` — Load and parse the project graph.
 - Programmatic `app.build()` API (preserved from current `compiler/index.js`).
 
-**`@chocola/server`** — The server package. Contains the current `dev/` and `server/` functionality. Provides:
-- Dev server with HMR (`dev.server()`).
-- SSR production server (`serve()`, `createHandler()`).
-- Middleware support.
+**`chocola`** — The full-stack framework package. Depends on `@chocola/core` and adds:
+- Dev server with HMR (`dev.server()`)
+- SSR production server (`serve()`, `createHandler()`)
+- CLI tool (`bin/chocola.js`) with `build`, `dev`, and `serve` commands
+- Middleware support
+- All existing `chocola.config.json` configuration
 
-This package depends on `@chocola/core` for compilation. It is the package used by `@chocola/stacks` and by advanced users who want the full server-side experience without the CLI.
+This is the package users install for the complete Chocola experience. It is a drop-in replacement for the current monolithic `chocola` package. Existing projects continue to work without modification.
 
-**`@chocola/cli`** — The command-line package. Contains the `bin/chocola.js` entry point and all CLI argument parsing logic. It delegates to `@chocola/core` and `@chocola/server` for the actual work. This is the package users install globally (`npm i -g @chocola/cli`) or use via `npx`.
+#### Repository structure
 
-**`@chocola/stacks`** — The metaframework package. A convenience package that depends on `@chocola/core`, `@chocola/server`, and `@chocola/cli` and re-exports them as a unified API. This is the "batteries-included" Chocola experience — the spiritual successor to the current monolithic `chocola` package. Users who want the full framework install `@chocola/stacks` and get everything. No third-party tools required; the server, dev server, and CLI are all bundled.
+```
+github.com/chocolajs/core          → @chocola/core (compiler library)
+  ├── compiler/
+  ├── parser/
+  ├── runtime/
+  └── utils.js
 
-**`@chocola/vite-plugin`** — The Vite plugin package. Contains a Vite plugin (`chocolaVite()`) that wraps `@chocola/core`'s compilation pipeline and integrates it into Vite's build and dev cycles. It handles:
-- Transforming `.html` Chocola components during Vite's module graph build.
-- Providing HMR for Chocola components during `vite dev`.
-- Generating the client runtime chunks during `vite build`.
-- Server-side rendering hooks if `vite-plugin-ssr` or similar is used.
+github.com/chocolajs/vite-plugin    → @chocola/vite-plugin (official Vite plugin)
+  ├── src/
+  ├── package.json                  → depends on @chocola/core, vite (peer)
+  └── ...
 
-This package depends on `@chocola/core` and `vite` as peers.
+github.com/chocolajs/chocola        → chocola (full-stack framework)
+  ├── dev/
+  ├── server/
+  ├── bin/
+  └── package.json                  → depends on @chocola/core
+```
+
+#### Dependency graph
+
+```
+chocola (github.com/chocolajs/chocola)
+  └── @chocola/core (github.com/chocolajs/core)
+      └── acorn, linkedom
+
+@chocola/vite-plugin (github.com/chocolajs/vite-plugin)
+  ├── @chocola/core
+  └── vite (peer)
+```
+
+Three repos. One ecosystem. New contributors go to `chocolajs/core` for the compiler, `chocolajs/vite-plugin` for the Vite integration, `chocolajs/chocola` for the framework. Each repo is focused and self-contained.
 
 #### How the Vite plugin works
 
-The `@chocola/vite-plugin` translates Chocola's compilation steps into Vite's plugin hooks:
+The `@chocola/vite-plugin` package wraps `@chocola/core`'s compilation pipeline and integrates it into Vite's build and dev cycles as a standard Vite plugin:
 
-1. **`transform` hook** — When Vite encounters a `.html` file with Chocola components, the plugin invokes `@chocola/core`'s `compile()` pipeline to produce the JavaScript output (runtime chunk, component class, template).
+1. **`transform` hook** — When Vite encounters a `.html` file with Chocola components, the plugin invokes `@chocola/core` to produce the JavaScript output (runtime chunk, component class, template).
 2. **`resolveId` hook** — Maps Chocola component imports (`import Action from "./Action.html"`) to virtual module IDs that the plugin can resolve.
 3. **`load` hook** — Returns the compiled output for virtual modules.
 4. **`configureServer` hook** — For dev mode, the plugin integrates with Vite's dev server to provide HMR updates when components change. The plugin uses Vite's native HMR mechanism instead of Chocola's custom one.
 5. **`generateBundle` hook** — During `vite build`, the plugin ensures the Chocola runtime chunks are properly emitted and bundled.
 
-The end result: a Vite project that treats Chocola `.html` files as first-class citizens, with all of Vite's existing features (CSS bundling, JS minification, asset optimization) working alongside Chocola components.
-
-#### Dependency graph
-
-```
-@chocola/stacks
-  ├── @chocola/core
-  ├── @chocola/server
-  └── @chocola/cli
-
-@chocola/vite-plugin
-  ├── @chocola/core
-  └── vite (peer)
-
-@chocola/server
-  └── @chocola/core
-
-@chocola/cli
-  ├── @chocola/core
-  └── @chocola/server (optional)
-```
-
 ## How we teach this
+
+### The React analogy
+
+Just as React is both a library (`react`) and the framework ecosystem people associate with it, Chocola is both `@chocola/core` and `chocola`. A developer using `@chocola/core` inside Vite is still "using Chocola." A team running `chocola dev` is still "using Chocola." The brand is unified — only the toolchain changes based on the user's needs.
+
+This matters because it eliminates a common friction point in modular ecosystems: "Am I using the library or the framework?" With React, nobody asks this question. The answer is always "React." Chocola should be the same.
 
 ### For new users
 
-The primary entry point depends on the user's stack:
-
-- **"I use Vite"** → Install `@chocola/core` and `@chocola/vite-plugin`. Register the plugin in `vite.config.js`. Start writing components. This is the easiest path for developers already in the Vite ecosystem.
-- **"I want the full Chocola experience"** → Install `@chocola/stacks`. Get everything — compiler, dev server, SSR, CLI — out of the box. This is the spiritual successor to the current `chocola` package.
-- **"I need custom tooling"** → Install `@chocola/core` directly and build whatever integration you need (Webpack plugin, Rollup plugin, esbuild plugin, etc.).
+- **"I use Vite"** → Install `@chocola/core` and `@chocola/vite-plugin`. Register the plugin in `vite.config.js`. Start writing components. You're using Chocola.
+- **"I want the full Chocola experience"** → Install `chocola`. Get everything — compiler, dev server, SSR, CLI — out of the box. `chocola dev`, `chocola build`, done. You're using Chocola.
+- **"I need custom tooling"** → Install `@chocola/core` directly and build whatever integration you need (webpack plugin, Rollup plugin, esbuild plugin, etc.). You're using Chocola.
 
 ### Marketing positioning
 
-- **`@chocola/core`** is the foundation. It's the compiler. It's what makes Chocola components work anywhere.
-- **`@chocola/stacks`** is the full framework. It's Chocola as you know it — autonomous, complete, no third-party dependencies. Marketing it as "The Chocola Framework" or "Chocola Stacks."
-- **`@chocola/vite-plugin`** is the bridge. It brings Chocola to Vite. Marketing it as "Chocola for Vite" or "Chocola Components — Ready for Vite."
-- **`@chocola/server`** is the full-stack layer. For teams that need SSR and dev server but build their own frontend integration.
-- **`@chocola/cli`** is the command-line tool. For the `@chocola/stacks` experience or for programmatic use.
+- **`@chocola/core`** is the library. It's the compiler. It's what makes Chocola components work anywhere — Vite, webpack, Rollup, or any bundler with a plugin API. Market it as "Chocola Components" or "The Chocola Compiler."
+- **`@chocola/vite-plugin`** is the official Vite bridge. It connects Chocola components to Vite's ecosystem. Market it as "Chocola for Vite" — discoverable by Vite users searching for frameworks.
+- **`chocola`** is the framework. It's the complete toolchain — compiler, dev server, SSR, CLI, everything. Market it as "Chocola" or "The Chocola Framework." This is the brand that carries the "sweetest way to build the web" identity.
+- **The brand is one.** All three packages share the Chocola name, logo, and identity. There is no competing brand — there's just Chocola, used the way you need it.
 
 ### Migration path
 
-Existing Chocola projects continue to work unchanged with `@chocola/stacks`, which is essentially the old `chocola` package repackaged. The `chocola` CLI remains available via `@chocola/cli`. The `chocola.config.json` and all existing project structures are preserved. There is no migration required for current users.
+Existing Chocola projects continue to work unchanged with `chocola`, which is essentially the old monolithic `chocola` package repackaged. The `chocola` CLI remains available. The `chocola.config.json` and all existing project structures are preserved. There is no migration required for current users.
 
-New users are introduced to the package that matches their workflow — Vite users get the plugin, full-stack users get stacks, library consumers get core.
+New users are introduced to the package that matches their workflow — Vite users get `@chocola/core` + `@chocola/vite-plugin`, full-stack users get `chocola`. Both are "using Chocola."
 
 ## Drawbacks
 
 ### Maintenance complexity
 
-- **Multiple packages to maintain.** Five packages means five `package.json` files, five version numbers, five CI pipelines (or more complex monorepo CI), and five changelogs to track. A change in `@chocola/core` may require coordinated releases in `@chocola/server`, `@chocola/cli`, `@chocola/stacks`, and `@chocola/vite-plugin`.
-- **Cross-package testing.** Integration tests that span multiple packages (e.g., `@chocola/vite-plugin` using `@chocola/core`) need careful setup. The monolith's single test suite becomes multiple test suites that must work together.
-- **Dependency management.** Each package introduces its own dependency tree. `@chocola/core` might depend on `acorn` and `linkedom`, while `@chocola/vite-plugin` depends on `vite` and `@chocola/core`. Version conflicts between packages (e.g., different versions of the same transitive dependency) become possible and must be managed, especially in a monorepo with workspaces.
-- **Breaking changes propagate.** If `@chocola/core` changes its public API, every dependent package needs to be updated and tested before release. The monolith had this problem too, but it was invisible — everything shipped together. Now it's explicit.
+- **Three packages instead of one.** Three `package.json` files, version numbers, CI pipelines, and changelogs to track. A change in `@chocola/core` may require coordinated releases in `@chocola/vite-plugin` and `chocola`. Cross-package testing is needed to ensure the framework and the Vite plugin integrate correctly with the library.
+- **Dependency management.** `chocola` depends on `@chocola/core`. Version conflicts between releases must be managed carefully.
+- **Breaking changes propagate.** If `@chocola/core` changes its public API, both `@chocola/vite-plugin` and `chocola` need to be updated and tested before release. The monolith had this problem too, but it was invisible — everything shipped together. Now it's explicit.
 
 ### Marketing tradeoffs
 
-- **Brand fragmentation.** Five packages mean five names to market. While `@chocola/stacks` can carry the "Chocola" brand, `@chocola/vite-plugin` is a more niche product. It may be harder to build brand recognition around a plugin than around a framework.
-- **Discovery challenges.** `@chocola/vite-plugin` competes with established frameworks in the Vite ecosystem. Users searching for "Vite frameworks" may not discover Chocola at all, since it appears as a plugin rather than a standalone framework.
-- **Positioning confusion.** Without a clear narrative, users may not understand the relationship between the packages. "Is `@chocola/stacks` the real Chocola? Is `@chocola/core` just a library? Why would I use `@chocola/cli` instead of `npx @chocola/stacks`?" Clear documentation and marketing are essential.
-- **The monolith's simplicity is a feature.** The current monolith is easy to understand: `npm install chocola`, `chocola dev`, done. The modular approach introduces a decision point ("which package do I need?") that some users may find overwhelming, especially beginners.
+- **Brand ambiguity.** Three packages with the same name could confuse users: "Is `@chocola/core` Chocola? Is `chocola` the real thing? What is `@chocola/vite-plugin`?" The React analogy helps here, but it requires consistent messaging. Documentation and marketing must clearly establish that all three packages are Chocola. This may be resolved organically by users giving packages explicit nicknames, by some other means, or by designing a new marketing strategy in the future.
+- **Discovery challenges.** `@chocola/core` and `@chocola/vite-plugin` both appear in npm search results for "Chocola." Users searching for "Chocola framework" may find `chocola` instead of `@chocola/core`, or vice versa. Clear naming conventions and cross-referencing are essential.
 
 ### Technical tradeoffs
 
-- **Plugin maturity.** A Vite plugin that replicates all features of Chocola's native dev server (HMR, SSR, hot reload for components) is a significant engineering effort. The plugin may not match the native experience immediately, especially for advanced features like `mount:if`, `bind:*`, and server-side `ctx` evaluation.
-- **Loss of control.** When Chocola's dev server is replaced by Vite's, Chocola loses direct control over the dev experience. HMR behavior, error overlays, and console output are determined by Vite, not Chocola. This could lead to a degraded developer experience in edge cases.
-- **Bundle size overhead.** `@chocola/vite-plugin` adds Vite as a dependency (peer). For users who only need the compiler and don't use Vite, this is irrelevant — but for the Vite plugin path, the combined `vite` + `@chocola/core` bundle may be larger than the monolithic `chocola` package's output.
-- **Double maintenance of `@chocola/stacks`.** `@chocola/stacks` is essentially a thin wrapper around the other packages. It adds little value beyond convenience, but it still needs to be maintained, versioned, and tested. It could become a "dead weight" package if users migrate to the individual packages.
+- **Loss of control.** When developers use `@chocola/vite-plugin` (or any third-party integration) instead of Chocola’s own dev server, the Chocola project loses direct control over the dev experience for those users.
 
 ## Alternatives
 
@@ -187,25 +197,20 @@ New users are introduced to the package that matches their workflow — Vite use
 
 Keep the current `chocola` package as-is. No split, no plugin, no additional complexity. The monolith is simple, easy to understand, and works today. The downside is continued bundler lock-in and slower adoption outside the Chocola ecosystem. This is the baseline option and requires zero additional work.
 
-### Partial split — compiler + everything else
+### Full five-package split
 
-Instead of five packages, split into just two: `@chocola/core` (the compiler) and `@chocola/framework` (everything else). This halves the maintenance burden while still enabling Vite integration via a community or official plugin. The downside is that users who want the full Chocola experience still need to install two packages, and the "full stack" story is less clear.
+The original proposal with five packages (`@chocola/core`, `@chocola/server`, `@chocola/cli`, `@chocola/stacks`, `@chocola/vite-plugin`). This provides maximum flexibility but doubles or triples the maintenance surface compared to the three-package approach. Each package is a separate marketing entity, which fragments the brand. The `@chocola/stacks` package becomes a thin wrapper that adds little value beyond convenience. More packages mean more decisions for users and more coordination for maintainers.
 
 ### Community plugin model
 
-Don't create an official `@chocola/vite-plugin`. Instead, publish `@chocola/core` and let the community build plugins. This reduces maintenance scope but risks a fragmented plugin ecosystem with varying quality. The Vite plugin may never reach the quality of the native dev server without dedicated maintenance.
-
-### Monorepo with workspace aliases
-
-Keep everything in one repo but use npm workspaces with path aliases (`"chocola": "file:packages/core"`). This preserves the monorepo development workflow while enabling independent publishing. The current repo already has a monorepo-like structure; this approach formalizes it. The downside is that users who install `chocola` still get the monolith unless they explicitly opt into individual packages.
+Don't create an official Vite plugin. Instead, publish `@chocola/core` and let the community build plugins. This reduces maintenance scope but risks a fragmented plugin ecosystem with varying quality. The Vite plugin may never reach the quality of the native dev server without dedicated maintenance.
 
 ## Unresolved questions
 
-- **Repository structure.** Should this be a single monorepo with workspaces, or separate repositories under `chocolajs/`? A monorepo simplifies cross-package development and testing; separate repos give each package full autonomy. The current repo structure (`compiler/`, `dev/`, `server/`, `runtime/`, `parser/`) suggests a monorepo migration is natural, but the decision is not made.
-- **Package naming.** T`@chocola/core`, `@chocola/server`, `@chocola/cli`, `@chocola/stacks`, `@chocola/vite-plugin` are suggested as placeholders. The actual scope of each package may change: should `@chocola/server` include both dev and SSR, or should they be separate? Should the CLI be part of `@chocola/stacks` instead of its own package?
-- **Versioning strategy.** Will all packages use the same version number (lockstep) or independent semver? Lockstep simplifies compatibility but defeats the purpose of independent releases. Independent semver requires careful coordination, especially for `@chocola/stacks` which depends on the other packages.
-- **Backwards compatibility guarantees.** How long will the monolithic `chocola` package continue to exist and receive updates? Will `@chocola/stacks` eventually replace it entirely, or will they coexist? A clear deprecation timeline is needed.
-- **Vite plugin scope.** What exactly does the `@chocola/vite-plugin` need to support from day one? Minimum viable: compile `.html` components, HMR for components, `vite build` output. Stretch: SSR integration, middleware support, `vite preview`. The scope directly impacts the engineering effort.
-- **Peer dependency strategy.** Should `@chocola/core` have any peer dependencies? Currently it depends on `acorn` and `linkedom`. Should these be bundled or peer? If peer, users must install them; if bundled, `@chocola/core`'s size increases.
-- **Documentation split.** Will each package have its own documentation site, or will there be a unified `chocola.dev` with sections for each package? The current `chocolajs.dev` site would need significant restructure.
-- **Testing matrix.** How will cross-package integration tests be structured? `@chocola/vite-plugin` tests need a working Vite environment + `@chocola/core`. `@chocola/stacks` tests need all packages installed. The current single test suite (`tests/**/*.test.js`) needs to be reorganized.
+- **Repository structure.** Decided. `@chocola/core` lives in its own repo (`github.com/chocolajs/core`), making it easy for new contributors to work with the compiler independently. `chocola` stays in `github.com/chocolajs/chocola`. Cross-repo coordination uses npm versioning and CI that tests against published versions, mirroring how React separates `react` and `react-dom`.
+- **Versioning strategy.** Decided. Each package will follow its own SemVer, allowing independent releases with their own dependencies, not forcing the latest `@chocola/core` release on both `chocola` and `@chocola/vite-plugin`.
+- **Backwards compatibility.** Decided. Since `chocola` is currently iterating through `next` versions before its v2, it is expected that substantial changes may be implemented. Iteration will continue as usual, and the `2.0.0` release will meet this RFC's specs.
+- **Vite plugin maturity.** What exactly does `@chocola/vite-plugin` need to support from day one? Minimum viable: compile `.html` components, HMR for components, `vite build` output. Stretch: SSR integration, middleware support. The scope directly impacts the engineering effort. The plugin lives in its own repo (`github.com/chocolajs/vite-plugin`), so it can be developed and released independently of the core compiler and the framework.
+- **Dependency strategy.** Decided. `@chocola/core` will have both `acorn` and `linkedom` dependencies.
+- **Documentation.** Will each package have its own documentation, or will there be a unified site? The current `chocolajs.dev` site would need restructuring to cover both the library (`@chocola/core`) and the framework (`chocola`) experiences. A Svelte-like approach, where svelte.dev explicitly contains both docs for Svelte and SvelteKit, may be of use.
+- **Testing matrix.** Decided. SemVer and releases will be fully independent, meaning each package will be tested against the released versions of their specified dependencies.
