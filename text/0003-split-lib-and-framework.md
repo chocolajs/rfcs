@@ -2,7 +2,7 @@
 - RFC PR: [#7](https://github.com/chocolajs/rfcs/pull/7)
 - Chocola Issue: chocolajs/chocola#185
 
-# Modularization: Splitting Chocola into Library and Framework
+# Splitting Chocola into Library and Framework
 
 ## Summary
 
