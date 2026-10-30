@@ -259,11 +259,46 @@ Prior art: Svelte (required imports, `.svelte` extension, compile errors for unk
 
 ## Unresolved questions
 
-- Should the entry be `buildModuleGraph(rootComponentPath)` (path first) or `buildModuleGraph(rootDir, { entry })`? The former is proposed; a config/override `entry` may still be useful for hosts.
-- How should **namespace imports** (`import * as ns from "./x.chjs"`) map to tags, if at all?
-- Should hyphenated custom elements self-closing syntax also be normalized, or left to hosts?
-- Do we still need `hashMap` in the return value, or should scoped CSS/runtime descriptors be self-contained?
-- How are **bare/package imports** (`import X from "chocola-router"`) surfaced to hosts, and should core pass them through in a manifest?
-- Should `.chjs` also be accepted as the script-only form, or reserved for full SFC components?
-- Error policy for near-miss tags (e.g. suggest the closest imported name), and whether unknown-tag strictness is configurable.
-- Interaction with the in-progress server-resolved `<script>` RFC (`text/0001-server-resolved-script-runtime.md`): import reachability/tree-shaking must be recomputed against the module graph rather than basenames.
+None — all items resolved or deferred for this RFC (see below).
+
+### Resolved questions (per review)
+
+#### 1. Entry API `buildModuleGraph(rootDir, { entry })`
+Take the directory-first form. It's more flexible: hosts already think in terms of a project `root` (Vite's root, ChocolaKit's workspace), and it lets `entry` stay an optional override/relative name while `rootDir` anchors everything else. Concretely:
+
+```js
+export async function buildModuleGraph(rootDir, { entry, config } = {});
+```
+
+- `rootDir` is required and absolute.
+- `entry` is a path relative to `rootDir` to the root `.chjs`; when omitted, hosts must supply it (no implicit `index.chjs` discovery).
+- Internally `rootComponentPath = path.resolve(rootDir, entry);` module ids remain relative to `rootDir`.
+
+#### 2. Namespace imports
+Support `import * as Root from "./lib/root/"` and map it to `<Root:Component>` and `<Root:Subdir:Component>`:
+
+- A namespace import registers a prefix, not a tag. The graph keeps `namespaceMap: Map<prefixLower, { dir, moduleIds }>` alongside `importMap`.
+- Resolution for `<Root:Component>` → `path.resolve(namespaceDir, "component.chjs")` (or `.chjs` under the namespace dir) → must exist in the graph; otherwise `Unknown component <Root:Component>: did you forget to import it?`.
+- A namespace prefix and a default-import local name must not collide; error at graph build if they do.
+- Namespace imports do not produce a bare tag binding (so <Root /> alone is an error).
+
+#### 3. Hyphenated custom elements, self-closing → host concern
+Leave as-is: core does not normalize `<my-widget />`. It's already listed as out of scope. No core change.
+
+#### 4. Keep `hashMap`
+Keep it. It's cheap, it's useful for debugging and for hosts that want to persist hashes across builds (cache keys, asset naming), and it decouples scoped-CSS identity from the host's own hashing scheme. Keep the shape `{ "<moduleId>": "<cssId>" }`. It's informational — hosts must not assume it's the only source of truth for style identity.
+
+#### 5. Non-`.chjs` imports → standard ESM in JS output
+Pass them through verbatim as ES module imports in the generated output. Core does not bundle, rewrite, or tree-shake them; it just preserves `import … from "…"` in the emitted JS so the host's bundler (Vite/Rollup) resolves them. Two consequences to spell out:
+
+- Core must not assume a module-system target; emitted JS is ESM (`import`/`export`).
+- Bare/package imports are therefore host-resolved by construction — no manifest needed. This also closes the “bare/package imports” question without extra surface.
+
+#### 6. `.chjs` also for script-only
+Accept a `.chjs` with only `<script>` (no `<template>`, no `<style>`). It compiles to a module that exports its `$runtime`/top-level bindings and renders nothing. This keeps “one extension, one mental model” and lets hosts author pure logic modules as `.chjs`. Validation: `<template>` is optional; if present it must parse.
+
+#### 7. Near-miss suggestions, capitalized tags only
+Emit a “did you mean …?” suggestion only for capitalized tag names, and only when a close match exists among `importMap`/`namespaceMap` keys (e.g. Levenshtein ≤ 2, or a prefix/case-insensitive match). Keep strictness non-configurable for now; if it becomes a pain point we can add a host-level `unknownTag: "error" | "warn"` flag later.
+
+#### 8. RFC 001 / reachability
+RFC#001 is legacy for this RFC's purposes. Core does not compute reachability or tree-shake across the module graph; it emits `$runtime` chunks and lets the host decide what to keep and how to resolve the import graph. `treeShakeRuntime` in `normalizeConfig` then only governs intra-module `$runtime` extraction, not cross-module reachability.
