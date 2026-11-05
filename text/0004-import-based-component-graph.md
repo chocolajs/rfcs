@@ -1,6 +1,6 @@
 - Start Date: 2026-10-18
-- RFC PR: (leave this empty)
-- Chocola Issue: (leave this empty)
+- RFC PR: [#9](https://github.com/chocolajs/rfcs/pull/9)
+- Chocola Issue: chocolajs/chocola#209
 
 # Import-based component graph with `.chjs` components and a pure compiler
 
